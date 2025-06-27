@@ -137,6 +137,7 @@ def extract_experience(text: str):
     companies = {comp for comp in companies if not any(black in comp.lower() for black in company_blacklist)}
 
 
+
     return {
         "jobs": list(jobs) if jobs else [],
         "companies": list(companies) if companies else [],

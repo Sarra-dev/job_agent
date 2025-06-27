@@ -1,14 +1,22 @@
 # bot.py
 import os
-import json
+import logging
+from typing import Dict, Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater, MessageHandler, Filters, CallbackContext,
+    Application, MessageHandler, filters, ContextTypes,
     CommandHandler, CallbackQueryHandler, ConversationHandler
 )
+from dotenv import load_dotenv
 from cv_processor import extract_cv_info
 from graphql_client import send_to_graphql
-from dotenv import load_dotenv
+from job_fetcher import fetch_jobs
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -16,113 +24,208 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Conversation states
 ASK_JOB, ASK_COUNTRY, ASK_CITY, ASK_LEVEL, SHOW_MATCHES = range(5)
 
-with open("job_offers.json", encoding="utf-8") as f:
-    JOB_OFFERS = json.load(f)
+# File constraints
+SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.doc', '.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
+MAX_FILE_SIZE = 20 * 1024 * 1024
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("👋 Welcome! Please send your CV (PDF, DOCX, or TXT).")
+
+# ✅ CANCELLATION HANDLER
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
 
-def handle_document(update: Update, context: CallbackContext):
-    file = update.message.document
-    file_id = file.file_id
-    new_file = context.bot.get_file(file_id)
-    filename = os.path.join(DOWNLOAD_DIR, file.file_name)
-    new_file.download(filename)
 
-    update.message.reply_text("📄 CV received. Processing...")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = (
+        "👋 Welcome to the Job Matching Bot!\n\n"
+        "Send your CV (PDF, DOCX, DOC, TXT, or clear image).\n"
+        "Then I’ll ask you a few questions and show job offers in France 🇫🇷 or Germany 🇩🇪\n"
+        "📏 Max file size: 20MB"
+    )
+    await update.message.reply_text(text)
+    return ConversationHandler.END
 
-    cv_info = extract_cv_info(filename)
-    context.user_data["cv"] = cv_info
 
-    if not cv_info.get("email"):
-        update.message.reply_text("❌ Could not extract a valid email from the CV. Please ensure your CV includes your email address.")
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        file = update.message.document
+        file_ext = os.path.splitext(file.file_name)[1].lower()
+
+        if file_ext not in SUPPORTED_EXTENSIONS:
+            await update.message.reply_text("❌ Unsupported file format.")
+            return ConversationHandler.END
+
+        if file.file_size > MAX_FILE_SIZE:
+            await update.message.reply_text("❌ File too large.")
+            return ConversationHandler.END
+
+        file_obj = await context.bot.get_file(file.file_id)
+        filename = os.path.join(DOWNLOAD_DIR, f"{update.effective_user.id}_{file.file_name}")
+        await file_obj.download_to_drive(filename)
+
+        await update.message.reply_text("📄 Processing your CV...")
+        cv_info = extract_cv_info(filename)
+        os.remove(filename)
+
+        if not cv_info.get("email"):
+            await update.message.reply_text("❌ Couldn’t extract a valid email.")
+            return ConversationHandler.END
+
+        context.user_data["cv"] = cv_info
+        send_to_graphql(cv_info)
+
+        await update.message.reply_text(
+            f"✅ CV processed!\n\n👤 Name: {cv_info.get('name', 'N/A')}\n"
+            f"📍 Location: {cv_info.get('location', 'Unknown')}\n"
+            f"💼 Now, what job title are you looking for?"
+        )
+        return ASK_JOB
+
+    except Exception as e:
+        logger.error(f"CV Error: {e}")
+        await update.message.reply_text("❌ Error processing your CV.")
         return ConversationHandler.END
 
-    send_to_graphql(cv_info)
 
-    update.message.reply_text("✅ CV processed. Let's find you a job!")
-    update.message.reply_text("What job are you looking for?")
-    return ASK_JOB
 
-def ask_country(update: Update, context: CallbackContext):
-    context.user_data["job"] = update.message.text
-    keyboard = [[
-        InlineKeyboardButton("🇫🇷 France", callback_data="France"),
-        InlineKeyboardButton("🇩🇪 Germany", callback_data="Germany")
-    ]]
-    update.message.reply_text("In which country?", reply_markup=InlineKeyboardMarkup(keyboard))
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        photo = update.message.photo[-1]
+        file_obj = await context.bot.get_file(photo.file_id)
+        filename = os.path.join(DOWNLOAD_DIR, f"{update.effective_user.id}_cv.jpg")
+        await file_obj.download_to_drive(filename)
+
+        await update.message.reply_text("🖼️ Processing image CV...")
+        cv_info = extract_cv_info(filename)
+        os.remove(filename)
+
+        if not cv_info.get("email"):
+            await update.message.reply_text("❌ Couldn’t extract email from the image.")
+            return ConversationHandler.END
+
+        context.user_data["cv"] = cv_info
+        send_to_graphql(cv_info)
+
+        await update.message.reply_text("✅ CV image processed!\n\nWhat job are you looking for?")
+        return ASK_JOB
+
+    except Exception as e:
+        logger.error(f"Photo CV Error: {e}")
+        await update.message.reply_text("❌ Error with image.")
+        return ConversationHandler.END
+
+
+async def ask_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["job"] = update.message.text.strip()
+    keyboard = [
+        [InlineKeyboardButton("🇫🇷 France", callback_data="fr")],
+        [InlineKeyboardButton("🇩🇪 Germany", callback_data="de")]
+    ]
+    await update.message.reply_text("Which country?", reply_markup=InlineKeyboardMarkup(keyboard))
     return ASK_COUNTRY
 
-def ask_city(update: Update, context: CallbackContext):
-    context.user_data["country"] = update.callback_query.data
-    update.callback_query.answer()
-    update.callback_query.message.reply_text("Which city?")
+
+async def ask_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["country"] = query.data
+
+    await query.edit_message_text("Which city? Type 'any' for all.")
     return ASK_CITY
 
-def ask_level(update: Update, context: CallbackContext):
-    context.user_data["city"] = update.message.text
-    update.message.reply_text("What is your experience level? (Junior, Mid, Senior)")
+
+async def ask_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["city"] = update.message.text.strip()
+    keyboard = [
+        [InlineKeyboardButton("👶 Junior", callback_data="junior"),
+         InlineKeyboardButton("👨‍💼 Mid", callback_data="mid"),
+         InlineKeyboardButton("🎯 Senior", callback_data="senior")]
+    ]
+    await update.message.reply_text("Your experience level?", reply_markup=InlineKeyboardMarkup(keyboard))
     return ASK_LEVEL
 
-def show_matches(update: Update, context: CallbackContext):
-    context.user_data["level"] = update.message.text.lower()
-    job = context.user_data["job"].lower()
-    country = context.user_data["country"].lower()
-    city = context.user_data["city"].lower()
+
+async def show_matches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["level"] = query.data
+
+    job = context.user_data["job"]
+    country = context.user_data["country"]
+    city = context.user_data["city"]
     level = context.user_data["level"]
 
-    matches = [
-        offer for offer in JOB_OFFERS
-        if job in offer["title"].lower()
-        and country in offer["location"].lower()
-        and city in offer["location"].lower()
-        and level in offer["level"].lower()
-    ]
+    await query.edit_message_text("🔍 Searching jobs...")
 
-    if not matches:
-        update.message.reply_text("❌ No matching offers found.")
-        return ConversationHandler.END
+    try:
+        results = await fetch_jobs(
+            job_title=job,
+            country=country,
+            city=city,
+            level=level
+        )
 
-    for offer in matches:
-        text = f"**{offer['title']}**\nCompany: {offer['company']}\nLocation: {offer['location']}\nLevel: {offer['level']}\n\n{offer['description']}"
-        keyboard = [[
-            InlineKeyboardButton("✅ Apply", url=offer["url"]),
-            InlineKeyboardButton("❌ Skip", callback_data="skip")
-        ]]
-        update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        if not results:
+            await query.message.reply_text("❌ No jobs found.")
+            return ConversationHandler.END
+
+        for job_offer in results:
+            await send_job_offer(query.message, job_offer)
+
+    except Exception as e:
+        logger.error(f"Adzuna fetch error: {e}")
+        await query.message.reply_text("⚠️ Error fetching jobs.")
 
     return ConversationHandler.END
 
-def skip(update: Update, context: CallbackContext):
-    update.callback_query.answer()
-    update.callback_query.message.reply_text("✅ Skipped.")
-    return ConversationHandler.END
+
+async def send_job_offer(message, job: Dict[str, Any]):
+    title = job.get("title", "N/A")
+
+    company = job.get("company", "Unknown")
+    location = job.get("location", "Unknown")
+
+
+    location_data = job.get("location")
+    if isinstance(location_data, dict):
+        location = location_data.get("display_name", "Unknown")
+    else:
+        location = "Unknown"
+
+    url = job.get("url", "#")
+    description = job.get("description", "")[:300] + "..."
+
+    text = f"📌 *{title}* at *{company}*\n📍 {location}\n\n📝 {description}"
+    keyboard = [[InlineKeyboardButton("Apply Now", url=url)]]
+
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(Filters.document, handle_document)],
+        entry_points=[
+            MessageHandler(filters.Document.ALL, handle_document),
+            MessageHandler(filters.PHOTO, handle_photo)
+        ],
         states={
-            ASK_JOB: [MessageHandler(Filters.text & ~Filters.command, ask_country)],
+            ASK_JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_country)],
             ASK_COUNTRY: [CallbackQueryHandler(ask_city)],
-            ASK_CITY: [MessageHandler(Filters.text & ~Filters.command, ask_level)],
-            ASK_LEVEL: [MessageHandler(Filters.text & ~Filters.command, show_matches)],
+            ASK_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_level)],
+            ASK_LEVEL: [CallbackQueryHandler(show_matches)]
         },
-        fallbacks=[CommandHandler("start", start)]
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+        allow_reentry=True
     )
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(conv_handler)
-    dp.add_handler(CallbackQueryHandler(skip, pattern="^skip$"))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+    application.run_polling()
 
-    print("🤖 Bot is running...")
-    updater.start_polling()
-    updater.idle()
 
 if __name__ == "__main__":
     main()
