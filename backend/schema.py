@@ -12,7 +12,7 @@ class UserProfile:
     skills: List[str]
     jobs: Optional[List[str]] = None
     companies: Optional[List[str]] = None
-    language: Optional[str] = None  # ✅ NEW
+    language: Optional[str] = None  
 
 @strawberry.input
 class UserProfileInput:

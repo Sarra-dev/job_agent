@@ -1,0 +1,7 @@
+test CV
+John Doe
+New York
+john@example.com
+Phone: 123456789
+Skills: Python, Machine Learning
+

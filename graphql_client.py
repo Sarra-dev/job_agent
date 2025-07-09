@@ -25,7 +25,8 @@ def send_to_graphql(info):
             "email": info["email"],
             "phone": info["phone"],
             "location": info["location"],
-            "skills": info["skills"]
+            "skills": info["skills"],
+            "jobs": info["jobs"]
         }
     }
 

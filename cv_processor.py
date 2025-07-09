@@ -15,7 +15,9 @@ nlp = spacy.load("en_core_web_md")
 
 # Define known skills
 KNOWN_SKILLS = [
-    "python", "java", "sql", "machine learning", "react", "angular", "node.js", "docker", "kubernetes"
+    "python", "java", "sql", "machine learning", "react",
+    "angular", "node.js", "docker", "kubernetes",
+    "javascript", "django", "c++", "html", "css", "creativity" , "leadership", "critical thiniking" , "productivity"
 ]
 
 def extract_text_from_file(file_path: str) -> str:
@@ -94,54 +96,41 @@ def detect_language(text: str) -> str:
     except:
         return "unknown"
 
-def extract_experience(text: str):
-    clean_text = re.sub(r'\s+', ' ', text.replace('\r', ' ').replace('\n', ' ')).strip()
-
+def extract_experience(text: str) -> dict:
+    """
+    Extracts job titles from text using more flexible regex patterns.
+    """
+    clean_text = text.lower()
     jobs = set()
-    companies = set()
 
-    doc = nlp(clean_text)
-    for ent in doc.ents:
-        if ent.label_ == "ORG":
-            org = ent.text.strip()
+    print("\n🔍 [DEBUG] Running improved regex job title extraction...")
 
-            if 3 <= len(org) <= 60:
-                org_lower = org.lower()
-                blacklist_keywords = [
-                    "university", "college", "baccalaureate", "certification", "portfolio", "project",
-                    "skill", "language", "interest", "team", "website", "student", "education",
-                    "training", "course", "workshop", "conference", "session", "study", "degree",
-                    "research", "department", "program"
-                ]
-                if not any(keyword in org_lower for keyword in blacklist_keywords):
-                    companies.add(org)
+    # Better generic pattern: looks for 1–3 words before common roles
+    pattern = r'\b(?:[a-zA-Z]+\s){0,2}(developer|engineer|designer|manager|analyst|consultant|scientist|researcher|architect|teacher|professor|intern|accountant|lawyer|cashier|sales representative|marketing manager|business analyst)\b'
 
-    job_title_patterns = [
-        r'\b(?:senior|junior|lead|principal|chief|head of|director of|vice president|vp|associate|assistant)?\s*'  # level (optional)
-        r'(?:software|web|mobile|frontend|front[- ]end|backend|back[- ]end|full[- ]stack|fullstack|data|machine learning|ml|ai|artificial intelligence|devops|cloud|qa|test|security|site reliability|sre|product|project|business|technical|solution|ui|ux|graphic|interaction|visual|database|system|network|it)?\s*'  # domain (optional)
-        r'(?:engineer|developer|programmer|architect|designer|analyst|manager|specialist|consultant|intern|trainee|administrator|master|scientist)\b'
-    ]
+    matches = re.findall(pattern, clean_text, flags=re.IGNORECASE)
+    print(f"   • [DEBUG] Matches for pattern '{pattern}': {matches}")
 
-    for pattern in job_title_patterns:
-        matches = re.findall(pattern, clean_text, flags=re.IGNORECASE)
-        for match in matches:
-            job_title = re.sub(r'\s+', ' ', match).strip().lower()
-            if len(job_title) > 2:
-                jobs.add(job_title)
+    for match in matches:
+        jobs.add(match.strip().lower())
 
-    # Remove obvious false positives from jobs & companies
-    job_blacklist = {'student', 'experience', 'education', 'language', 'skill', 'project', 'interest'}
-    jobs = {job for job in jobs if not any(black in job for black in job_blacklist)}
+    # Try to extract the preceding words too (e.g., "frontend developer")
+    pattern2 = r'\b([a-zA-Z]+\s(?:developer|engineer|designer|manager|analyst|consultant|scientist))\b'
+    matches2 = re.findall(pattern2, clean_text, flags=re.IGNORECASE)
+    print(f"   • [DEBUG] Matches for extended pattern '{pattern2}': {matches2}")
 
-    company_blacklist = {'education', 'project', 'portfolio', 'skill', 'language', 'team', 'interest', 'certification', 'training'}
-    companies = {comp for comp in companies if not any(black in comp.lower() for black in company_blacklist)}
+    for match in matches2:
+        jobs.add(match.strip().lower())
 
+    # Still keep fallback keywords
+    fallback_keywords = ["engineer", "developer", "manager", "analyst"]
+    for keyword in fallback_keywords:
+        if keyword in clean_text and keyword not in jobs:
+            print(f"   • [DEBUG] Fallback keyword matched: {keyword}")
+            jobs.add(keyword)
 
-
-    return {
-        "jobs": list(jobs) if jobs else [],
-        "companies": list(companies) if companies else [],
-    }
+    print("\n✅ [DEBUG] Final extracted jobs:", jobs)
+    return {"jobs": list(jobs)}
 
 
 
@@ -156,7 +145,6 @@ def extract_cv_info(file_path: str):
             "location": "Unknown",
             "skills": [],
             "jobs": [],
-            "companies": [],
             "language": "unknown"
         }
 
@@ -166,7 +154,6 @@ def extract_cv_info(file_path: str):
     experience = extract_experience(text)
 
     print("📄 Extracted Jobs:", experience["jobs"])
-    print("🏢 Extracted Companies:", experience["companies"])
    
 
 
@@ -177,6 +164,5 @@ def extract_cv_info(file_path: str):
         "location": location or "Unknown",
         "skills": skills,
         "jobs": experience["jobs"],
-        "companies": experience["companies"],
         "language": language
     }
