@@ -77,39 +77,22 @@ async def fetch_jobs(
 
 
 def parse_adzuna_response(data: Dict) -> List[Dict]:
-    """Convert raw Adzuna results to a clean list of job offers."""
     results = data.get("results", [])
     jobs = []
-
-    print("📥 Adzuna API raw 'results':", results)
 
     for job in results:
         if not isinstance(job, dict):
             continue
 
-        title = job.get("title", "N/A")
-
-        # ✅ Company
-        company = "Unknown"
-        if isinstance(job.get("company"), dict):
-            company = job["company"].get("display_name", "Unknown")
-
-        # ✅ Location – Handle missing field entirely
-        location = "Not provided"
-        if "location" in job and isinstance(job["location"], dict):
-            location = job["location"].get("display_name", "Not specified")
-
-        description = job.get("description", "")
-        url = job.get("redirect_url", "#")
-
         jobs.append({
-            "title": title,
-            "company": company,
-            "location": location,
-            "level": "N/A",
-            "description": description[:500],
-            "url": url
+            "id": job.get("id"),
+            "title": job.get("title"),
+            "company": job.get("company"),  # keep as dict!
+            "location": job.get("location"),  # keep as dict!
+            "description": job.get("description"),
+            "redirect_url": job.get("redirect_url")
         })
 
     return jobs
+
 

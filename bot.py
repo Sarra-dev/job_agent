@@ -1,4 +1,5 @@
-# bot.py
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 import os
 import logging
 from typing import Dict, Any
@@ -11,8 +12,10 @@ from dotenv import load_dotenv
 from cv_processor import extract_cv_info
 from graphql_client import send_to_graphql
 from job_fetcher import fetch_jobs
+from form_filler import fill_application_form
+import tempfile
 
-# Configure logging
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
@@ -24,15 +27,14 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Conversation states
+
 ASK_JOB, ASK_COUNTRY, ASK_CITY, ASK_LEVEL,ASK_CONFIRM, SHOW_MATCHES = range(6)
 
-# File constraints
 SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.doc', '.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
 
-# ✅ CANCELLATION HANDLER
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Operation cancelled.")
     return ConversationHandler.END
@@ -152,7 +154,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await update.message.reply_text(message)
             return ConversationHandler.END
 
-        # If all required info is present:
         context.user_data["cv"] = cv_info
         send_to_graphql(cv_info)
 
@@ -276,7 +277,6 @@ async def handle_job_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         await query.message.reply_text(f"✅ Selected job title: {job_title}")
 
-        # Now ask next step as a new message
         keyboard = [
             [InlineKeyboardButton("🇫🇷 France", callback_data="fr")],
             [InlineKeyboardButton("🇩🇪 Germany", callback_data="de")]
@@ -318,7 +318,7 @@ async def show_matches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             return ConversationHandler.END
 
         for job_offer in results:
-            await send_job_offer(query.message, job_offer)
+            await send_job_offer(query.message, job_offer , context)
 
     except Exception as e:
         logger.error(f"Adzuna fetch error: {e}")
@@ -327,12 +327,50 @@ async def show_matches(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return ConversationHandler.END
 
 
-async def send_job_offer(message, job: Dict[str, Any]):
+async def handle_autofill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    # Extract job ID only
+    job_id = query.data.replace("autofill_", "")
+
+    # Get URL from saved data
+    url = context.user_data.get("autofill_urls", {}).get(job_id)
+
+    if not url:
+        await query.message.reply_text("❌ Could not find the job URL.")
+        return
+
+    user_data = context.user_data.get("cv", {})
+
+    await query.message.reply_text("⏳ Preparing your application...")
+
+    success, result = fill_application_form(url, user_data)
+
+    if success:
+        with open(result, 'rb') as photo:
+            await query.message.reply_photo(
+                photo,
+                caption="✅ Application form pre-filled!\n\n"
+                        "Please review and submit if everything looks correct.\n"
+                        "Some fields might need manual adjustment."
+            )
+        os.remove(result)
+    elif result.startswith("Redirected to external site"):
+        await query.message.reply_text(
+            f"🔗 This job redirects externally: {result}\n"
+            "Please apply manually using the 'Apply Now' button above."
+        )
+    else:
+        await query.message.reply_text(
+            f"❌ Could not auto-fill the form. Error: {result}\n"
+            "You can still apply manually using the 'Apply Now' button above."
+        )
+
+
+async def send_job_offer(message, job: Dict[str, Any], context: ContextTypes.DEFAULT_TYPE):
     title = job.get("title", "N/A")
-
-    company = job.get("company", "Unknown")
-    location = job.get("location", "Unknown")
-
+    company = job.get("company", {}).get("display_name", "Unknown")
 
     location_data = job.get("location")
     if isinstance(location_data, dict):
@@ -340,13 +378,28 @@ async def send_job_offer(message, job: Dict[str, Any]):
     else:
         location = "Unknown"
 
-    url = job.get("url", "#")
+    url = job.get("redirect_url", "#")
     description = job.get("description", "")[:300] + "..."
 
     text = f"📌 *{title}* at *{company}*\n📍 {location}\n\n📝 {description}"
-    keyboard = [[InlineKeyboardButton("Apply Now", url=url)]]
 
-    await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    # Get job ID
+    job_id = str(job.get("id", "unknown"))
+
+    if "autofill_urls" not in context.user_data:
+        context.user_data["autofill_urls"] = {}
+    context.user_data["autofill_urls"][job_id] = url
+
+    keyboard = [
+        [InlineKeyboardButton("Apply Now", url=url)],
+        [InlineKeyboardButton("Auto-fill Application", callback_data=f"autofill_{job_id}")]
+    ]
+
+    await message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 def main():
@@ -373,6 +426,7 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(handle_autofill, pattern="^autofill_"))
     application.run_polling()
 
 
