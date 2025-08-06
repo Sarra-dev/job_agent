@@ -1,0 +1,2 @@
+[console_scripts]
+jobBot = jobBot.bot:main

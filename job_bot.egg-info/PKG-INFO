@@ -1,0 +1,46 @@
+Metadata-Version: 2.4
+Name: job_bot
+Version: 0.1.0
+Summary: A Telegram bot that extracts CV info, matches jobs, and auto-fills applications
+License: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Classifier: License :: OSI Approved :: MIT License
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: python-telegram-bot<21.0,>=20.0
+Requires-Dist: httpx<0.28.0,>=0.23.1
+Requires-Dist: python-dotenv<2.0.0,>=1.0.1
+Requires-Dist: spacy<4.0.0,>=3.7.4
+Requires-Dist: pytesseract<0.4.0,>=0.3.10
+Requires-Dist: Pillow<11.0.0,>=10.0.0
+Requires-Dist: textract<2.0.0,>=1.6.3
+Requires-Dist: langdetect<2.0.0,>=1.0.9
+Requires-Dist: docx2txt<1.0.0,>=0.8
+Requires-Dist: pdf2image<2.0.0,>=1.17.0
+Requires-Dist: selenium<5.0.0,>=4.0.0
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+This is a Telegram bot that allows users to upload their CV (PDF, DOCX, TXT, DOC, or image formats like JPG/PNG). The bot extracts information from the CV, stores it, and helps the user find job offers in France or Germany based on their preferences.
+
+Features
+
+Accepts CV uploads in PDF, DOCX, DOC, TXT, JPG, PNG, BMP, TIFF.
+
+Extracts text using OCR for images.
+
+Uses spaCy for NLP tasks.
+
+Matches user profile to available job offers using the Adzuna API.
+
+Conversational flow to collect user preferences (job title, country, city, level).
+
+Requirements
+
+See requirements.txt for Python dependencies.

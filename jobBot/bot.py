@@ -10,8 +10,8 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 from jobBot.cv_processor import extract_cv_info
-from jobBot.graphql_client import send_to_graphql
 from jobBot.job_fetcher import fetch_jobs
+from jobBot.graphql_client import send_to_graphql
 from jobBot.form_filler import fill_application_form
 import tempfile
 

@@ -1,0 +1,17 @@
+README.md
+setup.py
+jobBot/__init__.py
+jobBot/bot.py
+jobBot/cv_processor.py
+jobBot/extract_text_utils.py
+jobBot/form_filler.py
+jobBot/graphql_client.py
+jobBot/job_fetcher.py
+jobBot.egg-info/PKG-INFO
+jobBot.egg-info/SOURCES.txt
+jobBot.egg-info/dependency_links.txt
+jobBot.egg-info/entry_points.txt
+jobBot.egg-info/requires.txt
+jobBot.egg-info/top_level.txt
+tests/test_cv_processor.py
+tests/test_job_fetcher.py
